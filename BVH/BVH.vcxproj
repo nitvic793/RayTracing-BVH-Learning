@@ -116,6 +116,9 @@
       <AdditionalLibraryDirectories>$(SolutionDir)lib\zlib;$(SolutionDir)lib\OpenCL\lib;$(SolutionDir)lib\GLFW\lib-vc2019;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>libz-static.lib;OpenCL.lib;glfw3_mt.lib;glfw3.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <PostBuildEvent>
+      <Command>rmdir  $(TargetDir)Assets &amp; mklink /J $(TargetDir)Assets $(SolutionDir)Assets</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -139,6 +142,9 @@
       <AdditionalLibraryDirectories>$(SolutionDir)lib\zlib;$(SolutionDir)lib\OpenCL\lib;$(SolutionDir)lib\GLFW\lib-vc2019;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>libz-static.lib;OpenCL.lib;glfw3_mt.lib;glfw3.lib;opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <PostBuildEvent>
+      <Command>rmdir  $(TargetDir)Assets &amp; mklink /J $(TargetDir)Assets $(SolutionDir)Assets</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\BVH.cpp" />

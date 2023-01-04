@@ -1,0 +1,1 @@
+mklink /J $(TargetDir)Assets $(SolutionDir)Assets

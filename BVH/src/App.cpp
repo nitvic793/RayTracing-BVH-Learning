@@ -2,17 +2,56 @@
 #include "App.h"
 #include <BVH.h>
 
+#pragma warning (disable: 4996)
+
 using namespace bvh;
 
 TheApp* CreateApp() { return new MyApp(); }
 
-constexpr uint N = 1024;
+constexpr uint N = 12582;
 
 Tri tri[N];
 uint triIdx[N];
 BVHNode BVHNodes[2 * N + 1];
 uint RootNodeIdx = 0;
 uint NodesUsed = 1;
+
+struct AABB
+{
+	float3 BMax = -FLOAT_MAX;
+	float3 BMin = FLOAT_MAX;
+};
+
+void LoadTris()
+{
+	// Ensure "Current Directory" (relative path) is always the .exe's folder
+	{
+		char currentDir[1024] = {};
+		GetModuleFileName(0, currentDir, 1024);
+		char* lastSlash = strrchr(currentDir, '\\');
+		if (lastSlash)
+		{
+			*lastSlash = 0;
+			SetCurrentDirectory(currentDir);
+		}
+	}
+
+	FILE* file = fopen(".\\Assets\\unity.tri", "r");
+	float a, b, c, d, e, f, g, h, i;
+	for (int t = 0; t < N; t++)
+	{
+		auto ret = fscanf(file, "%f %f %f %f %f %f %f %f %f\n",
+			&a, &b, &c, &d, &e, &f, &g, &h, &i);
+		tri[t].Vertex0 = float3(a, b, c);
+		tri[t].Vertex1 = float3(d, e, f);
+		tri[t].Vertex2 = float3(g, h, i);
+	}
+
+	for (int t = 0; t < N; t++)
+		triIdx[t] = t;
+
+	fclose(file);
+}
 
 void UpdateNodeBounds(uint nodeIdx, BVHNode* nodes, Tri* tris, uint* triIndices, uint& nodesUsed)
 {
@@ -127,22 +166,9 @@ void IntersectBVH(Ray& ray, const uint nodeIdx, BVHNode* nodes, Tri* tris, uint*
 	}
 }
 
-
-
 void MyApp::Init()
 {
-	for (int i = 0; i < N; i++) 
-		triIdx[i] = i;
-
-	for (int i = 0; i < N; i++)
-	{
-		float3 r0(RandomFloat(), RandomFloat(), RandomFloat());
-		float3 r1(RandomFloat(), RandomFloat(), RandomFloat());
-		float3 r2(RandomFloat(), RandomFloat(), RandomFloat());
-		tri[i].Vertex0 = r0 * 9 - float3(5);
-		tri[i].Vertex1 = tri[i].Vertex0 + r1;
-		tri[i].Vertex2 = tri[i].Vertex0 + r2;
-	}
+	LoadTris();
 
 	BuildBVH(tri, triIdx, N, RootNodeIdx, NodesUsed, BVHNodes, 2 * N + 1);
 }
@@ -153,7 +179,7 @@ void MyApp::Tick( float deltaTime )
 	screen->Clear( 0 );
 
 	float3 camPos(0, 0, -18);
-	float3 p0(-1, 1, -15), p1(1, 1, -15), p2(-1, -1, -15);
+	float3 p0(-1, 1, 2), p1(1, 1, 2), p2(-1, -1, 2);
 	Ray ray;
 	Timer t;
 
@@ -164,8 +190,11 @@ void MyApp::Tick( float deltaTime )
 	{
 		for (uint x = 0; x < WIDTH; ++x)
 		{
-			float3 pixelPos = p0 + (p1 - p0) * (x / (float)WIDTH) + (p2 - p0) * (y / (float)HEIGHT);
-			ray.Orig = camPos;
+			ray.Orig = float3(-1.5f, -0.2f, -2.5f);
+			float3 pixelPos = ray.Orig + p0 +
+				(p1 - p0) * (x / (float)WIDTH) +
+				(p2 - p0) * (y / (float)HEIGHT);
+
 			ray.Dir = normalize(pixelPos - ray.Orig);
 			ray.T = FLOAT_MAX;
 
@@ -176,8 +205,9 @@ void MyApp::Tick( float deltaTime )
 
 			IntersectBVH(ray, RootNodeIdx, BVHNodes, tri, triIdx);
 
+			uint c = 500 - (int)(ray.T * 42);
 			if (ray.T < FLOAT_MAX)
-				screen->Plot(x, y, 0xffffff);
+				screen->Plot(x, y, c * 0x10101);
 		}
 	}
 
