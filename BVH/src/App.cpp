@@ -16,11 +16,32 @@ BVHNode BVHNodes[2 * N + 1];
 uint RootNodeIdx = 0;
 uint NodesUsed = 1;
 
-struct AABB
+float EvaluateSAH(BVHNode& node, int axis, float pos)
 {
-	float3 BMax = -FLOAT_MAX;
-	float3 BMin = FLOAT_MAX;
-};
+	aabb leftBox, rightBox;
+	int leftCount = 0, rightCount = 0;
+	for (uint i = 0; i < node.TriCount; i++)
+	{
+		Tri& triangle = tri[triIdx[node.LeftFirst + i]];
+		if (triangle.Centroid[axis] < pos)
+		{
+			leftCount++;
+			leftBox.Grow(triangle.Vertex0);
+			leftBox.Grow(triangle.Vertex1);
+			leftBox.Grow(triangle.Vertex2);
+		}
+		else
+		{
+			rightCount++;
+			rightBox.Grow(triangle.Vertex0);
+			rightBox.Grow(triangle.Vertex1);
+			rightBox.Grow(triangle.Vertex2);
+		}
+	}
+
+	float cost = leftCount * leftBox.Area() + rightCount * rightBox.Area();
+	return cost > 0 ? cost : FLOAT_MAX;
+}
 
 void LoadTris()
 {
@@ -75,19 +96,38 @@ void UpdateNodeBounds(uint nodeIdx, BVHNode* nodes, Tri* tris, uint* triIndices,
 void Subdivide(uint nodeIdx, BVHNode* nodes, Tri* tris, uint* triIndices, uint& nodesUsed)
 {
 	auto& node = nodes[nodeIdx];
-	if (node.TriCount <= 2) 
+	//if (node.TriCount <= 2) 
+	//	return;
+
+	int bestAxis = -1;
+	float bestPos = 0;
+	float bestCost = FLOAT_MAX;
+
+	for (int axis = 0; axis < 3; ++axis)
+	{
+		for (uint i = 0; i < node.TriCount; ++i)
+		{
+			Tri& triangle = tris[triIndices[node.LeftFirst + i]];
+			float candidatePos = triangle.Centroid[axis];
+			float cost = EvaluateSAH(node, axis, candidatePos);
+			if (cost < bestCost)
+			{
+				bestCost = cost;
+				bestAxis = axis;
+				bestPos = candidatePos;
+			}
+		}
+	}
+
+	int axis = bestAxis;
+	float splitPos = bestPos;// node.AABBMin[axis] + extent[axis] * 0.5f;
+
+	float3 extent = node.AABBMax - node.AABBMin; // Parent Extent
+	float parentArea = extent.x * extent.y + extent.y * extent.z + extent.z * extent.x;
+	float parentCost = node.TriCount * parentArea;
+
+	if (bestCost >= parentCost)
 		return;
-
-	float3 extent = node.AABBMax - node.AABBMin;
-
-	int axis = 0;
-	if (extent.y > extent.x) 
-		axis = 1;
-
-	if (extent.z > extent[axis])
-		axis = 2;
-
-	float splitPos = node.AABBMin[axis] + extent[axis] * 0.5f;
 
 	int i = node.LeftFirst;
 	int j = i + node.TriCount - 1;
