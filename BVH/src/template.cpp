@@ -86,6 +86,8 @@ void main()
 {
 	// open a window
 	if (!glfwInit()) FatalError( "glfwInit failed." );
+	app = CreateApp();
+
 	glfwSetErrorCallback( ErrorCallback );
 	glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 3 ); // 3.3 is enough for our needs
 	glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, 3 );
@@ -93,9 +95,9 @@ void main()
 	glfwWindowHint( GLFW_STENCIL_BITS, GL_FALSE );
 	glfwWindowHint( GLFW_RESIZABLE, GL_FALSE /* easier :) */ );
 #ifdef FULLSCREEN
-	window = glfwCreateWindow( SCRWIDTH, SCRHEIGHT, "Tmpl8-2022", glfwGetPrimaryMonitor(), 0 );
+	window = glfwCreateWindow( SCRWIDTH, SCRHEIGHT, app->GetAppName(), glfwGetPrimaryMonitor(), 0 );
 #else
-	window = glfwCreateWindow( SCRWIDTH, SCRHEIGHT, "Tmpl8-2022", 0, 0 );
+	window = glfwCreateWindow( SCRWIDTH, SCRHEIGHT, app->GetAppName(), 0, 0 );
 #endif
 	if (!window) FatalError( "glfwCreateWindow failed." );
 	glfwMakeContextCurrent( window );
@@ -132,7 +134,6 @@ void main()
 	// initialize application
 	InitRenderTarget( SCRWIDTH, SCRHEIGHT );
 	Surface* screen = new Surface( SCRWIDTH, SCRHEIGHT );
-	app = CreateApp();
 	app->screen = screen;
 	app->Init();
 	// done, enter main loop

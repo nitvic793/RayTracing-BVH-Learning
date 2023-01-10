@@ -19,6 +19,8 @@ public:
 	void KeyDown( int key ) { /* implement if you want to handle keys */ }
 	// data members
 	int2 mousePos;
+
+	const char* GetAppName() const override { return "BVH-Construction"; }
 };
 
 } // namespace Tmpl8

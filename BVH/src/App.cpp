@@ -8,209 +8,268 @@ using namespace bvh;
 
 TheApp* CreateApp() { return new MyApp(); }
 
+#define USE_SSE 1
+
 constexpr uint N = 12582;
 
+void Subdivide(uint nodeIdx);
+void UpdateNodeBounds(uint nodeIdx);
+
+struct AABB
+{
+    float3 bmin = 1e30f;
+    float3 bmax = -1e30f;
+
+    void Grow(float3 p) 
+    { 
+        bmin = fminf(bmin, p); 
+        bmax = fmaxf(bmax, p); 
+    }
+
+    float Area()
+    {
+        float3 e = bmax - bmin; // box extent
+        return e.x * e.y + e.y * e.z + e.z * e.x;
+    }
+};
+
+
+// application data
 Tri tri[N];
 uint triIdx[N];
-BVHNode BVHNodes[2 * N + 1];
-uint RootNodeIdx = 0;
-uint NodesUsed = 1;
+BVHNode* bvhNode = 0;
+uint rootNodeIdx = 0, nodesUsed = 2;
+
+constexpr float IntersectAABB(const Ray& ray, const float3 bmin, const float3 bmax)
+{
+    float tx1 = (bmin.x - ray.Orig.x) * ray.rD.x; 
+    float tx2 = (bmax.x - ray.Orig.x) * ray.rD.x;
+    float tmin = min(tx1, tx2);
+    float tmax = max(tx1, tx2);
+    float ty1 = (bmin.y - ray.Orig.y) * ray.rD.y;
+    float ty2 = (bmax.y - ray.Orig.y) * ray.rD.y;
+
+    tmin = max(tmin, min(ty1, ty2)); 
+    tmax = min(tmax, max(ty1, ty2));
+
+    float tz1 = (bmin.z - ray.Orig.z) * ray.rD.z; 
+    float tz2 = (bmax.z - ray.Orig.z) * ray.rD.z;
+
+    tmin = max(tmin, min(tz1, tz2)); 
+    tmax = min(tmax, max(tz1, tz2));
+
+    if (tmax >= tmin && tmin < ray.T && tmax > 0) 
+        return tmin; 
+    else 
+        return FLOAT_DIST_MAX;
+}
+
+#if USE_SSE
+
+float IntersectAABB_SSE(const Ray& ray, const __m128& bmin4, const __m128& bmax4)
+{
+    static __m128 mask4 = _mm_cmpeq_ps(_mm_setzero_ps(), _mm_set_ps(1, 0, 0, 0));
+    __m128 t1 = _mm_mul_ps(_mm_sub_ps(_mm_and_ps(bmin4, mask4), ray.O4), ray.rD4);
+    __m128 t2 = _mm_mul_ps(_mm_sub_ps(_mm_and_ps(bmax4, mask4), ray.O4), ray.rD4);
+    __m128 vmax4 = _mm_max_ps(t1, t2), vmin4 = _mm_min_ps(t1, t2);
+    float tmax = min(vmax4.m128_f32[0], min(vmax4.m128_f32[1], vmax4.m128_f32[2]));
+    float tmin = max(vmin4.m128_f32[0], max(vmin4.m128_f32[1], vmin4.m128_f32[2]));
+
+    if (tmax >= tmin && tmin < ray.T && tmax > 0) 
+        return tmin; 
+    else 
+        return FLOAT_DIST_MAX;
+}
+
+#endif
+
+void IntersectBVH(Ray& ray)
+{
+    BVHNode* node = &bvhNode[rootNodeIdx], * stack[64];
+    uint stackPtr = 0;
+    while (1)
+    {
+        if (node->IsLeaf())
+        {
+            for (uint i = 0; i < node->TriCount; i++)
+                IntersectTri(ray, tri[triIdx[node->LeftFirst + i]]);
+            if (stackPtr == 0) break; else node = stack[--stackPtr];
+            continue;
+        }
+
+        BVHNode* child1 = &bvhNode[node->LeftFirst];
+        BVHNode* child2 = &bvhNode[node->LeftFirst + 1];
+#if USE_SSE
+        float dist1 = IntersectAABB_SSE(ray, child1->AABBMin4, child1->AABBMax4);
+        float dist2 = IntersectAABB_SSE(ray, child2->AABBMin4, child2->AABBMax4);
+#else
+        float dist1 = IntersectAABB(ray, child1->AABBMin, child1->AABBMax);
+        float dist2 = IntersectAABB(ray, child2->AABBMin, child2->AABBMax);
+#endif
+
+        if (dist1 > dist2) 
+        {
+            swap(dist1, dist2); 
+            swap(child1, child2); 
+        }
+
+        if (dist1 == FLOAT_DIST_MAX)
+        {
+            if (stackPtr == 0) 
+                break; 
+            else 
+                node = stack[--stackPtr];
+        }
+        else
+        {
+            node = child1;
+            if (dist2 != FLOAT_DIST_MAX)
+                stack[stackPtr++] = child2;
+        }
+    }
+}
+
+void BuildBVH()
+{
+    bvhNode = (BVHNode*)_aligned_malloc(sizeof(BVHNode) * N * 2, 64);
+    if (!bvhNode)
+        return;
+
+    for (int i = 0; i < N; i++) 
+        triIdx[i] = i;
+    for (int i = 0; i < N; i++)
+        tri[i].Centroid = (tri[i].Vertex0 + tri[i].Vertex1 + tri[i].Vertex2) * 0.3333f;
+
+    BVHNode& root = bvhNode[rootNodeIdx];
+    root.LeftFirst = 0, root.TriCount = N;
+    UpdateNodeBounds(rootNodeIdx);
+    Timer t;
+    Subdivide(rootNodeIdx);
+    printf("BVH (%i nodes) constructed in %.2fms.\n", nodesUsed, t.elapsed() * 1000);
+}
+
+void UpdateNodeBounds(uint nodeIdx)
+{
+    BVHNode& node = bvhNode[nodeIdx];
+    node.AABBMin = float3(1e30f);
+    node.AABBMax = float3(-1e30f);
+    for (uint first = node.LeftFirst, i = 0; i < node.TriCount; i++)
+    {
+        uint leafTriIdx = triIdx[first + i];
+        Tri& leafTri = tri[leafTriIdx];
+        node.AABBMin = fminf(node.AABBMin, leafTri.Vertex0);
+        node.AABBMin = fminf(node.AABBMin, leafTri.Vertex1);
+        node.AABBMin = fminf(node.AABBMin, leafTri.Vertex2);
+        node.AABBMax = fmaxf(node.AABBMax, leafTri.Vertex0);
+        node.AABBMax = fmaxf(node.AABBMax, leafTri.Vertex1);
+        node.AABBMax = fmaxf(node.AABBMax, leafTri.Vertex2);
+    }
+}
 
 float EvaluateSAH(BVHNode& node, int axis, float pos)
 {
-	aabb leftBox, rightBox;
-	int leftCount = 0, rightCount = 0;
-	for (uint i = 0; i < node.TriCount; i++)
-	{
-		Tri& triangle = tri[triIdx[node.LeftFirst + i]];
-		if (triangle.Centroid[axis] < pos)
-		{
-			leftCount++;
-			leftBox.Grow(triangle.Vertex0);
-			leftBox.Grow(triangle.Vertex1);
-			leftBox.Grow(triangle.Vertex2);
-		}
-		else
-		{
-			rightCount++;
-			rightBox.Grow(triangle.Vertex0);
-			rightBox.Grow(triangle.Vertex1);
-			rightBox.Grow(triangle.Vertex2);
-		}
-	}
-
-	float cost = leftCount * leftBox.Area() + rightCount * rightBox.Area();
-	return cost > 0 ? cost : FLOAT_MAX;
+    // determine triangle counts and bounds for this split candidate
+    AABB leftBox, rightBox;
+    int leftCount = 0, rightCount = 0;
+    for (uint i = 0; i < node.TriCount; i++)
+    {
+        Tri& triangle = tri[triIdx[node.LeftFirst + i]];
+        if (triangle.Centroid[axis] < pos)
+        {
+            leftCount++;
+            leftBox.Grow(triangle.Vertex0);
+            leftBox.Grow(triangle.Vertex1);
+            leftBox.Grow(triangle.Vertex2);
+        }
+        else
+        {
+            rightCount++;
+            rightBox.Grow(triangle.Vertex0);
+            rightBox.Grow(triangle.Vertex1);
+            rightBox.Grow(triangle.Vertex2);
+        }
+    }
+    float cost = leftCount * leftBox.Area() + rightCount * rightBox.Area();
+    return cost > 0 ? cost : 1e30f;
 }
 
-void LoadTris()
+void Subdivide(uint nodeIdx)
 {
-	// Ensure "Current Directory" (relative path) is always the .exe's folder
-	{
-		char currentDir[1024] = {};
-		GetModuleFileName(0, currentDir, 1024);
-		char* lastSlash = strrchr(currentDir, '\\');
-		if (lastSlash)
-		{
-			*lastSlash = 0;
-			SetCurrentDirectory(currentDir);
-		}
-	}
+    BVHNode& node = bvhNode[nodeIdx];
 
-	FILE* file = fopen(".\\Assets\\unity.tri", "r");
-	float a, b, c, d, e, f, g, h, i;
-	for (int t = 0; t < N; t++)
-	{
-		auto ret = fscanf(file, "%f %f %f %f %f %f %f %f %f\n",
-			&a, &b, &c, &d, &e, &f, &g, &h, &i);
-		tri[t].Vertex0 = float3(a, b, c);
-		tri[t].Vertex1 = float3(d, e, f);
-		tri[t].Vertex2 = float3(g, h, i);
-	}
+    // determine split axis using SAH
+    int bestAxis = -1;
+    float bestPos = 0, bestCost = 1e30f;
+    for (int axis = 0; axis < 3; axis++) for (uint i = 0; i < node.TriCount; i++)
+    {
+        Tri& triangle = tri[triIdx[node.LeftFirst + i]];
+        float candidatePos = triangle.Centroid[axis];
+        float cost = EvaluateSAH(node, axis, candidatePos);
+        if (cost < bestCost)
+            bestPos = candidatePos, bestAxis = axis, bestCost = cost;
+    }
+    int axis = bestAxis;
+    float splitPos = bestPos;
+    float3 e = node.AABBMax - node.AABBMin; // extent of parent
+    float parentArea = e.x * e.y + e.y * e.z + e.z * e.x;
+    float parentCost = node.TriCount * parentArea;
+    if (bestCost >= parentCost) return;
 
-	for (int t = 0; t < N; t++)
-		triIdx[t] = t;
+    int i = node.LeftFirst;
+    int j = i + node.TriCount - 1;
+    while (i <= j)
+    {
+        if (tri[triIdx[i]].Centroid[axis] < splitPos)
+            i++;
+        else
+            swap(triIdx[i], triIdx[j--]);
+    }
 
-	fclose(file);
-}
+    int leftCount = i - node.LeftFirst;
+    if (leftCount == 0 || leftCount == node.TriCount) return;
 
-void UpdateNodeBounds(uint nodeIdx, BVHNode* nodes, Tri* tris, uint* triIndices, uint& nodesUsed)
-{
-	auto& node = nodes[nodeIdx];
-	node.AABBMin = float3(FLOAT_MAX);
-	node.AABBMax = float3(-FLOAT_MAX);
+    int leftChildIdx = nodesUsed++;
+    int rightChildIdx = nodesUsed++;
+    bvhNode[leftChildIdx].LeftFirst = node.LeftFirst;
+    bvhNode[leftChildIdx].TriCount = leftCount;
+    bvhNode[rightChildIdx].LeftFirst = i;
+    bvhNode[rightChildIdx].TriCount = node.TriCount - leftCount;
+    node.LeftFirst = leftChildIdx;
+    node.TriCount = 0;
+    UpdateNodeBounds(leftChildIdx);
+    UpdateNodeBounds(rightChildIdx);
 
-	for (uint first = node.LeftFirst, i = 0; i < node.TriCount; ++i)
-	{
-		const uint leafTriIdx = triIndices[first + i];
-		Tri& leafTri = tris[leafTriIdx];
-		node.AABBMin = fminf(node.AABBMin, leafTri.Vertex0);
-		node.AABBMin = fminf(node.AABBMin, leafTri.Vertex1);
-		node.AABBMin = fminf(node.AABBMin, leafTri.Vertex2);
-		node.AABBMax = fmaxf(node.AABBMax, leafTri.Vertex0);
-		node.AABBMax = fmaxf(node.AABBMax, leafTri.Vertex1);
-		node.AABBMax = fmaxf(node.AABBMax, leafTri.Vertex2);
-	}
-}
-
-void Subdivide(uint nodeIdx, BVHNode* nodes, Tri* tris, uint* triIndices, uint& nodesUsed)
-{
-	auto& node = nodes[nodeIdx];
-	//if (node.TriCount <= 2) 
-	//	return;
-
-	int bestAxis = -1;
-	float bestPos = 0;
-	float bestCost = FLOAT_MAX;
-
-	for (int axis = 0; axis < 3; ++axis)
-	{
-		for (uint i = 0; i < node.TriCount; ++i)
-		{
-			Tri& triangle = tris[triIndices[node.LeftFirst + i]];
-			float candidatePos = triangle.Centroid[axis];
-			float cost = EvaluateSAH(node, axis, candidatePos);
-			if (cost < bestCost)
-			{
-				bestCost = cost;
-				bestAxis = axis;
-				bestPos = candidatePos;
-			}
-		}
-	}
-
-	int axis = bestAxis;
-	float splitPos = bestPos;// node.AABBMin[axis] + extent[axis] * 0.5f;
-
-	float3 extent = node.AABBMax - node.AABBMin; // Parent Extent
-	float parentArea = extent.x * extent.y + extent.y * extent.z + extent.z * extent.x;
-	float parentCost = node.TriCount * parentArea;
-
-	if (bestCost >= parentCost)
-		return;
-
-	int i = node.LeftFirst;
-	int j = i + node.TriCount - 1;
-
-	while (i <= j)
-	{
-		if (tris[triIndices[i]].Centroid[axis] < splitPos)
-			i++;
-		else
-			swap(triIndices[i], triIndices[j--]);
-	}
-
-	int leftCount = i - node.LeftFirst;
-	if (leftCount == 0 || leftCount == node.TriCount)
-		return;
-
-	int leftChildIdx = nodesUsed++;
-	int rightChildIdx = nodesUsed++;
-	
-	nodes[leftChildIdx].LeftFirst = node.LeftFirst;
-	nodes[leftChildIdx].TriCount = leftCount;
-	nodes[rightChildIdx].LeftFirst = i;
-	nodes[rightChildIdx].TriCount = node.TriCount - leftCount;
-
-	node.LeftFirst = leftChildIdx;
-	node.TriCount = 0;
-
-	UpdateNodeBounds(leftChildIdx, nodes, tris, triIndices, nodesUsed);
-	UpdateNodeBounds(rightChildIdx, nodes, tris, triIndices, nodesUsed);
-
-	Subdivide(leftChildIdx, nodes, tris, triIndices, nodesUsed);
-	Subdivide(rightChildIdx, nodes, tris, triIndices, nodesUsed);
-}
-
-void BuildBVH(Tri* tri, uint* triIndices, const uint triCount, const uint rootNodeIdx, uint& nodesUsed, BVHNode* bvhNodes, uint maxBvhNodeCount)
-{
-	for (uint i = 0; i < triCount; ++i)
-	{
-		auto& t = tri[i];
-		t.Centroid = (t.Vertex0 + t.Vertex1 + t.Vertex2) * 0.3333f;
-	}
-
-	auto& root = bvhNodes[rootNodeIdx];
-	root.LeftFirst = 0;
-	root.TriCount = triCount;
-	UpdateNodeBounds(rootNodeIdx, bvhNodes, tri, triIndices, nodesUsed);
-	Subdivide(rootNodeIdx, bvhNodes, tri, triIndices, nodesUsed);
-}
-
-constexpr bool IntersectAABB(const Ray& ray, const float3 bmin, const float3 bmax)
-{
-	float tx1 = (bmin.x - ray.Orig.x) / ray.Dir.x, tx2 = (bmax.x - ray.Orig.x) / ray.Dir.x;
-	float tmin = min(tx1, tx2), tmax = max(tx1, tx2);
-	float ty1 = (bmin.y - ray.Orig.y) / ray.Dir.y, ty2 = (bmax.y - ray.Orig.y) / ray.Dir.y;
-	tmin = max(tmin, min(ty1, ty2)), tmax = min(tmax, max(ty1, ty2));
-	float tz1 = (bmin.z - ray.Orig.z) / ray.Dir.z, tz2 = (bmax.z - ray.Orig.z) / ray.Dir.z;
-	tmin = max(tmin, min(tz1, tz2)), tmax = min(tmax, max(tz1, tz2));
-	return tmax >= tmin && tmin < ray.T&& tmax > 0;
-}
-
-void IntersectBVH(Ray& ray, const uint nodeIdx, BVHNode* nodes, Tri* tris, uint* triIndices)
-{
-	auto& node = nodes[nodeIdx];
-	if (!IntersectAABB(ray, node.AABBMin, node.AABBMax))
-		return;
-
-	if (node.IsLeaf())
-	{
-		for (uint i = 0; i < node.TriCount; ++i)
-			IntersectTri(ray, tri[triIndices[node.LeftFirst + i]]);
-	}
-	else
-	{
-		IntersectBVH(ray, node.LeftFirst, nodes, tris, triIndices);
-		IntersectBVH(ray, node.LeftFirst + 1, nodes, tris, triIndices);
-	}
+    Subdivide(leftChildIdx);
+    Subdivide(rightChildIdx);
 }
 
 void MyApp::Init()
 {
-	LoadTris();
+    // Ensure "Current Directory" (relative path) is always the .exe's folder
+    {
+        char currentDir[1024] = {};
+        GetModuleFileName(0, currentDir, 1024);
+        char* lastSlash = strrchr(currentDir, '\\');
+        if (lastSlash)
+        {
+            *lastSlash = 0;
+            SetCurrentDirectory(currentDir);
+        }
+    }
 
-	BuildBVH(tri, triIdx, N, RootNodeIdx, NodesUsed, BVHNodes, 2 * N + 1);
+    FILE* file = fopen("Assets/unity.tri", "r");
+    float a, b, c, d, e, f, g, h, i;
+    for (int t = 0; t < N; t++)
+    {
+        int ret = fscanf(file, "%f %f %f %f %f %f %f %f %f\n",
+            &a, &b, &c, &d, &e, &f, &g, &h, &i);
+        tri[t].Vertex0 = float3(a, b, c);
+        tri[t].Vertex1 = float3(d, e, f);
+        tri[t].Vertex2 = float3(g, h, i);
+    }
+    fclose(file);
+
+	BuildBVH();
 }
 
 void MyApp::Tick( float deltaTime )
@@ -226,59 +285,30 @@ void MyApp::Tick( float deltaTime )
 	constexpr uint WIDTH = SCRWIDTH;
 	constexpr uint HEIGHT = SCRHEIGHT;
 
-	for (uint y = 0; y < HEIGHT; ++y)
+	for (uint y = 0; y < HEIGHT; y+=4)
 	{
-		for (uint x = 0; x < WIDTH; ++x)
+		for (uint x = 0; x < WIDTH; x+=4)
 		{
-			ray.Orig = float3(-1.5f, -0.2f, -2.5f);
-			float3 pixelPos = ray.Orig + p0 +
-				(p1 - p0) * (x / (float)WIDTH) +
-				(p2 - p0) * (y / (float)HEIGHT);
+            for (int v = 0; v < 4; v++)
+            {
+                for (int u = 0; u < 4; u++)
+                {
+                    ray.Orig = float3(-1.5f, -0.2f, -2.5f);
+                    float3 pixelPos = ray.Orig + p0 + (p1 - p0) * ((x + u) / (float)WIDTH) + (p2 - p0) * ((y + v) / (float)HEIGHT);
+                    ray.Dir = normalize(pixelPos - ray.Orig);
+                    ray.T = FLOAT_DIST_MAX;
 
-			ray.Dir = normalize(pixelPos - ray.Orig);
-			ray.T = FLOAT_MAX;
+                    ray.rD = float3(1 / ray.Dir.x, 1 / ray.Dir.y, 1 / ray.Dir.z);
+                    IntersectBVH(ray);
 
-			//for (int i = 0; i < N; i++)
-			//{
-			//	IntersectTri(ray, tri[i]);
-			//}
-
-			IntersectBVH(ray, RootNodeIdx, BVHNodes, tri, triIdx);
-
-			uint c = 500 - (int)(ray.T * 42);
-			if (ray.T < FLOAT_MAX)
-				screen->Plot(x, y, c * 0x10101);
+                    uint c = 500 - (int)(ray.T * 42);
+                    if (ray.T < FLOAT_DIST_MAX) 
+                        screen->Plot(x + u, y + v, c * 0x10101);
+                }
+            }
 		}
 	}
 
 	float elapsed = t.elapsed() * 1000;
 	printf("tracing time: %.2fms (%5.2fK rays/s)\n", elapsed, sqr(630) / elapsed);
-
-#if 0
-
-	static Kernel* kernel = 0;			// statics should be members of MyApp of course.
-	static Surface bitmap( 512, 512 );	// having them here allows us to disable the OpenCL
-	static Buffer* clBuffer = 0;		// demonstration using a single #if 0.
-	static int offset = 0;
-	if (!kernel)
-	{
-		// prepare for OpenCL work
-		Kernel::InitCL();		
-		// compile and load kernel "render" from file "kernels.cl"
-		kernel = new Kernel( "cl/kernels.cl", "render" );
-		// create an OpenCL buffer over using bitmap.pixels
-		clBuffer = new Buffer( 512 * 512, Buffer::DEFAULT, bitmap.pixels );
-	}
-	// pass arguments to the OpenCL kernel
-	kernel->SetArgument( 0, clBuffer );
-	kernel->SetArgument( 1, offset++ );
-	// run the kernel; use 512 * 512 threads
-	kernel->Run( 512 * 512 );
-	// get the results back from GPU to CPU (and thus: into bitmap.pixels)
-	clBuffer->CopyFromDevice();
-	// show the result on screen
-	bitmap.CopyTo( screen, 500, 200 );
-
-#endif
-
 }

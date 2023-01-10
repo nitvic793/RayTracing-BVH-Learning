@@ -15,7 +15,7 @@ namespace bvh
 		if (a > -EPSILON && a < EPSILON)
 			return; // ray parallel to triangle
 
-		const float f = 1 / a;
+		const float f = 1.0f / a;
 		const float3 s = ray.Orig - tri.Vertex0;
 		const float u = f * dot(s, h);
 		if (u < 0 || u > 1) 
