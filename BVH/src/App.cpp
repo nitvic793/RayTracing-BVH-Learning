@@ -27,6 +27,12 @@ struct AABB
         bmax = fmaxf(bmax, p); 
     }
 
+    void Grow(const AABB& bb) 
+    { 
+        bmin = fminf(bmin, bb.bmin);
+        bmax = fmaxf(bmax, bb.bmax);
+    }
+
     float Area()
     {
         float3 e = bmax - bmin; // box extent
@@ -218,7 +224,7 @@ float FindBestSplitPlane(BVHNode& node, int& outAxis, float& splitPos)
         float boundsMin = FLOAT_DIST_MAX;
         float boundsMax = -FLOAT_DIST_MAX;
 
-        for (int i = 0; i < node.TriCount; ++i)
+        for (uint i = 0; i < node.TriCount; ++i)
         {
             Tri& triangle = tri[triIdx[node.LeftFirst + i]];
             boundsMin = min(boundsMin, triangle.Centroid[axis]);
@@ -228,20 +234,49 @@ float FindBestSplitPlane(BVHNode& node, int& outAxis, float& splitPos)
         if (boundsMin == boundsMax)
             continue;
 
-        //Bin bins[BINS];
-        //float scale = BINS / (boundsMax - boundsMin);
-        //for()
-
-        auto scale = (boundsMax - boundsMin) / PLANE_INTERVALS;
-
-        for (uint i = 0; i < PLANE_INTERVALS; ++i)
+        Bin bins[BINS];
+        float scale = BINS / (boundsMax - boundsMin);
+        for (uint i = 0; i < node.TriCount; ++i)
         {
-            float candidatePos = boundsMin + i * scale;
-            float cost = EvaluateSAH(node, axis, candidatePos);
-            if (cost < bestCost)
+            Tri& triangle = tri[triIdx[node.LeftFirst + i]];
+            int binIdx = min((int)BINS - 1, (int)((triangle.Centroid[axis] - boundsMin) * scale));
+            bins[binIdx].TriCount++;
+            bins[binIdx].Bounds.Grow(triangle.Vertex0);
+            bins[binIdx].Bounds.Grow(triangle.Vertex1);
+            bins[binIdx].Bounds.Grow(triangle.Vertex2);
+        }
+
+        float leftArea[BINS - 1];
+        float rightArea[BINS - 1];
+        int leftCount[BINS - 1];
+        int rightCount[BINS - 1];
+
+        AABB leftBox;
+        AABB rightBox;
+        int leftSum = 0;
+        int rightSum = 0;
+
+        for (int i = 0; i < BINS - 1; ++i)
+        {
+            leftSum += bins[i].TriCount;
+            leftCount[i] = leftSum;
+            leftBox.Grow(bins[i].Bounds);
+            leftArea[i] = leftBox.Area();
+            rightSum += bins[BINS - 1 - i].TriCount;
+            rightCount[BINS - 2 - i] = rightSum;
+            rightBox.Grow(bins[BINS - 1 - i].Bounds);
+            rightArea[BINS - 2 - i] = rightBox.Area();
+        }
+
+        scale = (boundsMax - boundsMin) / BINS;
+
+        for (uint i = 0; i < BINS - 1; ++i)
+        {
+            float planeCost = leftCount[i] * leftArea[i] + rightCount[i] * rightArea[i];
+            if (planeCost < bestCost)
             {
-                bestCost = cost;
-                splitPos = candidatePos;
+                bestCost = planeCost;
+                splitPos = boundsMin + scale * (i + 1);
                 outAxis = axis;
             }
         }
