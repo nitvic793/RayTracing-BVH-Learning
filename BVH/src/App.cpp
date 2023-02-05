@@ -11,6 +11,7 @@ TheApp* CreateApp() { return new MyApp(); }
 #define USE_SSE 1
 
 constexpr uint N = 12582;
+constexpr uint BINS = 8;
 
 void Subdivide(uint nodeIdx);
 void UpdateNodeBounds(uint nodeIdx);
@@ -31,6 +32,12 @@ struct AABB
         float3 e = bmax - bmin; // box extent
         return e.x * e.y + e.y * e.z + e.z * e.x;
     }
+};
+
+struct Bin
+{
+    AABB Bounds;
+    int TriCount = 0;
 };
 
 
@@ -93,7 +100,10 @@ void IntersectBVH(Ray& ray)
         {
             for (uint i = 0; i < node->TriCount; i++)
                 IntersectTri(ray, tri[triIdx[node->LeftFirst + i]]);
-            if (stackPtr == 0) break; else node = stack[--stackPtr];
+            if (stackPtr == 0) 
+                break; 
+            else 
+                node = stack[--stackPtr];
             continue;
         }
 
@@ -143,9 +153,11 @@ void BuildBVH()
     BVHNode& root = bvhNode[rootNodeIdx];
     root.LeftFirst = 0, root.TriCount = N;
     UpdateNodeBounds(rootNodeIdx);
-    Timer t;
-    Subdivide(rootNodeIdx);
-    printf("BVH (%i nodes) constructed in %.2fms.\n", nodesUsed, t.elapsed() * 1000);
+    {
+        Timer t;
+        Subdivide(rootNodeIdx);
+        printf("BVH (%i nodes) constructed in %.2fms.\n", nodesUsed, t.elapsed() * 1000);
+    }
 }
 
 void UpdateNodeBounds(uint nodeIdx)
@@ -190,7 +202,61 @@ float EvaluateSAH(BVHNode& node, int axis, float pos)
         }
     }
     float cost = leftCount * leftBox.Area() + rightCount * rightBox.Area();
-    return cost > 0 ? cost : 1e30f;
+    return cost > 0 ? cost : FLOAT_DIST_MAX;
+}
+
+float FindBestSplitPlane(BVHNode& node, int& outAxis, float& splitPos)
+{
+    int bestAxis = -1;
+    float bestPos = 0;
+    float bestCost = FLOAT_DIST_MAX;
+
+    constexpr float PLANE_INTERVALS = 8;
+    
+    for (int axis = 0; axis < 3; axis++)
+    {
+        float boundsMin = FLOAT_DIST_MAX;
+        float boundsMax = -FLOAT_DIST_MAX;
+
+        for (int i = 0; i < node.TriCount; ++i)
+        {
+            Tri& triangle = tri[triIdx[node.LeftFirst + i]];
+            boundsMin = min(boundsMin, triangle.Centroid[axis]);
+            boundsMax = max(boundsMax, triangle.Centroid[axis]);
+        }
+
+        if (boundsMin == boundsMax)
+            continue;
+
+        //Bin bins[BINS];
+        //float scale = BINS / (boundsMax - boundsMin);
+        //for()
+
+        auto scale = (boundsMax - boundsMin) / PLANE_INTERVALS;
+
+        for (uint i = 0; i < PLANE_INTERVALS; ++i)
+        {
+            float candidatePos = boundsMin + i * scale;
+            float cost = EvaluateSAH(node, axis, candidatePos);
+            if (cost < bestCost)
+            {
+                bestCost = cost;
+                splitPos = candidatePos;
+                outAxis = axis;
+            }
+        }
+    }
+
+    return bestCost;
+}
+
+float CalculateNodeCost(BVHNode& node)
+{
+    float3 e = node.AABBMax - node.AABBMin; // extent of parent
+    float surfaceArea = e.x * e.y + e.y * e.z + e.z * e.x;
+    float cost = node.TriCount * surfaceArea;
+
+    return cost;
 }
 
 void Subdivide(uint nodeIdx)
@@ -198,22 +264,13 @@ void Subdivide(uint nodeIdx)
     BVHNode& node = bvhNode[nodeIdx];
 
     // determine split axis using SAH
-    int bestAxis = -1;
-    float bestPos = 0, bestCost = 1e30f;
-    for (int axis = 0; axis < 3; axis++) for (uint i = 0; i < node.TriCount; i++)
-    {
-        Tri& triangle = tri[triIdx[node.LeftFirst + i]];
-        float candidatePos = triangle.Centroid[axis];
-        float cost = EvaluateSAH(node, axis, candidatePos);
-        if (cost < bestCost)
-            bestPos = candidatePos, bestAxis = axis, bestCost = cost;
-    }
-    int axis = bestAxis;
-    float splitPos = bestPos;
-    float3 e = node.AABBMax - node.AABBMin; // extent of parent
-    float parentArea = e.x * e.y + e.y * e.z + e.z * e.x;
-    float parentCost = node.TriCount * parentArea;
-    if (bestCost >= parentCost) return;
+    int axis;
+    float splitPos;
+    float splitCost = FindBestSplitPlane(node, axis, splitPos);
+    
+    float noSplitCost = CalculateNodeCost(node);
+    if (splitCost >= noSplitCost) 
+        return;
 
     int i = node.LeftFirst;
     int j = i + node.TriCount - 1;
@@ -284,14 +341,15 @@ void MyApp::Tick( float deltaTime )
 
 	constexpr uint WIDTH = SCRWIDTH;
 	constexpr uint HEIGHT = SCRHEIGHT;
+    constexpr uint TILE_COUNT = 4;
 
-	for (uint y = 0; y < HEIGHT; y+=4)
-	{
-		for (uint x = 0; x < WIDTH; x+=4)
-		{
-            for (int v = 0; v < 4; v++)
+    for (uint y = 0; y < HEIGHT; y += TILE_COUNT)
+    {
+        for (uint x = 0; x < WIDTH; x += TILE_COUNT)
+        {
+            for (int v = 0; v < TILE_COUNT; v++)
             {
-                for (int u = 0; u < 4; u++)
+                for (int u = 0; u < TILE_COUNT; u++)
                 {
                     ray.Orig = float3(-1.5f, -0.2f, -2.5f);
                     float3 pixelPos = ray.Orig + p0 + (p1 - p0) * ((x + u) / (float)WIDTH) + (p2 - p0) * ((y + v) / (float)HEIGHT);
@@ -302,12 +360,12 @@ void MyApp::Tick( float deltaTime )
                     IntersectBVH(ray);
 
                     uint c = 500 - (int)(ray.T * 42);
-                    if (ray.T < FLOAT_DIST_MAX) 
+                    if (ray.T < FLOAT_DIST_MAX)
                         screen->Plot(x + u, y + v, c * 0x10101);
                 }
             }
-		}
-	}
+        }
+    }
 
 	float elapsed = t.elapsed() * 1000;
 	printf("tracing time: %.2fms (%5.2fK rays/s)\n", elapsed, sqr(630) / elapsed);
