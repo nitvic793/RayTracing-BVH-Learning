@@ -10,7 +10,7 @@ TheApp* CreateApp() { return new MyApp(); }
 
 #define USE_SSE 1
 
-constexpr uint N = 12582;
+constexpr uint N = 20944;
 constexpr uint BINS = 8;
 
 void Subdivide(uint nodeIdx);
@@ -49,6 +49,7 @@ struct Bin
 
 // application data
 Tri tri[N];
+Tri original[N];
 uint triIdx[N];
 BVHNode* bvhNode = 0;
 uint rootNodeIdx = 0, nodesUsed = 2;
@@ -147,7 +148,13 @@ void IntersectBVH(Ray& ray)
 
 void BuildBVH()
 {
-    bvhNode = (BVHNode*)_aligned_malloc(sizeof(BVHNode) * N * 2, 64);
+    if (!bvhNode)
+    {
+        bvhNode = (BVHNode*)_aligned_malloc(sizeof(BVHNode) * N * 2, 64);
+    }
+
+    nodesUsed = 2;
+
     if (!bvhNode)
         return;
 
@@ -349,55 +356,108 @@ void MyApp::Init()
         }
     }
 
-    FILE* file = fopen("Assets/unity.tri", "r");
-    float a, b, c, d, e, f, g, h, i;
+    FILE* file = fopen("Assets/bigben.tri", "r");
     for (int t = 0; t < N; t++)
     {
         int ret = fscanf(file, "%f %f %f %f %f %f %f %f %f\n",
-            &a, &b, &c, &d, &e, &f, &g, &h, &i);
-        tri[t].Vertex0 = float3(a, b, c);
-        tri[t].Vertex1 = float3(d, e, f);
-        tri[t].Vertex2 = float3(g, h, i);
+            &original[t].Vertex0.x, &original[t].Vertex0.y, &original[t].Vertex0.z,
+            &original[t].Vertex1.x, &original[t].Vertex1.y, &original[t].Vertex1.z,
+            &original[t].Vertex2.x, &original[t].Vertex2.y, &original[t].Vertex2.z);
+
+        tri[t].Vertex0 = original[t].Vertex0;
+        tri[t].Vertex1 = original[t].Vertex1;
+        tri[t].Vertex2 = original[t].Vertex2;
     }
+
     fclose(file);
 
 	BuildBVH();
 }
 
+void Animate()
+{
+    static float r = 0.f;
+    constexpr float TWO_PI = 2 * PI;
+    if ((r += 0.05f) > TWO_PI)
+        r -= TWO_PI;
+
+    float a = sinf(r) * 0.5f;
+    for (int i = 0; i < N; ++i)
+    {
+        for (int j = 0; j < 3; ++j)
+        {
+            float3 o = (&original[i].Vertex0)[j];
+            float s = a * (o.y - 0.2f) * 0.2f;
+            float x = o.x * cosf(s) - o.y * sinf(s);
+            float y = o.x * sinf(s) + o.y * cosf(s);
+            (&tri[i].Vertex0)[j] = float3(x, y, o.z);
+        }
+    }
+    
+}
+
+void RefitBVH()
+{
+    for (int i = nodesUsed - 1; i >= 0; --i)
+    {
+        if (i != 1)
+        {
+            BVHNode& node = bvhNode[i];
+            if (node.IsLeaf())
+            {
+                UpdateNodeBounds(i);
+                continue;
+            }
+
+            auto& leftChild = bvhNode[node.LeftFirst];
+            auto& rightChild = bvhNode[node.LeftFirst + 1];
+
+            node.AABBMin = fminf(leftChild.AABBMin, rightChild.AABBMin);
+            node.AABBMax = fmaxf(leftChild.AABBMax, rightChild.AABBMax);
+        }
+    }
+}
+
 void MyApp::Tick( float deltaTime )
 {	
-	// clear the screen to black
-	screen->Clear( 0 );
+    // clear the screen to black
+    screen->Clear(0);
 
-	float3 camPos(0, 0, -18);
-	float3 p0(-1, 1, 2), p1(1, 1, 2), p2(-1, -1, 2);
+    Timer t;
+    Animate();
+    RefitBVH();
+
+    float3 p0(-1, 1, 2), p1(1, 1, 2), p2(-1, -1, 2);
 	Ray ray;
-	Timer t;
 
 	constexpr uint WIDTH = SCRWIDTH;
 	constexpr uint HEIGHT = SCRHEIGHT;
-    constexpr uint TILE_COUNT = 4;
+    constexpr uint TILE_COUNT = 6400;
+    constexpr uint TILE_SIZE = 8;
 
-    for (uint y = 0; y < HEIGHT; y += TILE_COUNT)
+    #pragma omp parallel for schedule(dynamic)
+    for (int tile = 0; tile < TILE_COUNT; ++tile)
     {
-        for (uint x = 0; x < WIDTH; x += TILE_COUNT)
+        int x = tile % 80;
+        int y = tile / 80;
+
+        Ray ray;
+        ray.Orig = float3(0, 3.5f, -4.5f);
+        for (int v = 0; v < TILE_SIZE; ++v)
         {
-            for (int v = 0; v < TILE_COUNT; v++)
+            for (int u = 0; u < TILE_SIZE; ++u)
             {
-                for (int u = 0; u < TILE_COUNT; u++)
-                {
-                    ray.Orig = float3(-1.5f, -0.2f, -2.5f);
-                    float3 pixelPos = ray.Orig + p0 + (p1 - p0) * ((x + u) / (float)WIDTH) + (p2 - p0) * ((y + v) / (float)HEIGHT);
-                    ray.Dir = normalize(pixelPos - ray.Orig);
-                    ray.T = FLOAT_DIST_MAX;
+                float3 pixelPos = ray.Orig + p0 +
+                    (p1 - p0) * ((x * TILE_SIZE + u) / 640.f) +
+                    (p2 - p0) * ((y * TILE_SIZE + v) / 640.f);
 
-                    ray.rD = float3(1 / ray.Dir.x, 1 / ray.Dir.y, 1 / ray.Dir.z);
-                    IntersectBVH(ray);
+                ray.Dir = normalize(pixelPos - ray.Orig);
+                ray.T = FLOAT_DIST_MAX;
+                ray.rD = float3(1 / ray.Dir.x, 1 / ray.Dir.y, 1 / ray.Dir.z);
 
-                    uint c = 500 - (int)(ray.T * 42);
-                    if (ray.T < FLOAT_DIST_MAX)
-                        screen->Plot(x + u, y + v, c * 0x10101);
-                }
+                IntersectBVH(ray);
+                uint c = ray.T < FLOAT_DIST_MAX ? (255 - (int)((ray.T - 4) * 180)) : 0;
+                screen->Plot(x * 8 + u, y * 8 + v, c * 0x10101);
             }
         }
     }
