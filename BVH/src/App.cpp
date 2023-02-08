@@ -1,13 +1,16 @@
 #include "Common/precomp.h"
 #include "App.h"
 #include <BVH.h>
+#include <TLAS.h>
 
 using namespace bvh;
 
 TheApp* CreateApp() { return new MyApp(); }
 
 // application data
-BVH gBvh;
+constexpr uint BVH_COUNT = 2;
+BVH gBvh[BVH_COUNT];
+TLAS tlas;
 
 void MyApp::Init()
 {
@@ -23,7 +26,10 @@ void MyApp::Init()
         }
     }
 
-    gBvh = BVH("Assets/armadillo.tri", 30000);
+    gBvh[0] = BVH("Assets/armadillo.tri", 30000);
+    gBvh[1] = BVH("Assets/armadillo.tri", 30000);
+    tlas = TLAS(gBvh, BVH_COUNT);
+    tlas.Build();
 }
 
 void MyApp::Tick( float deltaTime )
@@ -32,6 +38,16 @@ void MyApp::Tick( float deltaTime )
     screen->Clear(0);
 
     Timer t;
+
+    static float angle = 0.f;
+    angle += 0.01f;
+
+    constexpr auto TWO_PI = 2.f * PI;
+    if (angle > TWO_PI)
+        angle -= TWO_PI;
+
+    gBvh[0].SetTransform(mat4::Translate(float3(-1.3f, 0, 0)));
+    gBvh[1].SetTransform(mat4::Translate(float3(1.3f, 0, 0)) * mat4::RotateY(angle));
 
     float3 p0(-1, 1, 2), p1(1, 1, 2), p2(-1, -1, 2);
 	Ray ray;
@@ -49,6 +65,7 @@ void MyApp::Tick( float deltaTime )
         int y = tile / TILE_SCALE;
 
         Ray ray;
+        ray.Orig = float3(0, 0.5f, -4.5f);
         for (int v = 0; v < TILE_SIZE; ++v)
         {
             for (int u = 0; u < TILE_SIZE; ++u)
@@ -61,11 +78,7 @@ void MyApp::Tick( float deltaTime )
                 ray.T = FLOAT_DIST_MAX;
                 ray.rD = float3(1 / ray.Dir.x, 1 / ray.Dir.y, 1 / ray.Dir.z);
                     
-                ray.Orig = float3(-1, 0.5f, -4.5f);
-                gBvh.Intersect(ray);
-
-                ray.Orig = float3(1, 0.5f, -4.5f);
-                gBvh.Intersect(ray);
+                tlas.Intersect(ray);
 
                 uint c = ray.T < FLOAT_DIST_MAX ? (255 - (int)((ray.T - 3) * 80)) : 0;
                 screen->Plot(x * TILE_SIZE + u, y * TILE_SIZE + v, c * 0x10101);

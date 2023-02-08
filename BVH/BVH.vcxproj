@@ -158,12 +158,14 @@
     <ClCompile Include="src\BVH.cpp" />
     <ClCompile Include="src\template.cpp" />
     <ClCompile Include="src\App.cpp" />
+    <ClCompile Include="src\TLAS.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\BVH.h" />
     <ClInclude Include="include\Common\common.h" />
     <ClInclude Include="include\Common\precomp.h" />
     <ClInclude Include="include\App.h" />
+    <ClInclude Include="include\TLAS.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

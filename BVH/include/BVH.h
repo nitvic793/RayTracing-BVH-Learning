@@ -71,6 +71,8 @@ namespace bvh
     };
 
     void IntersectTri(Ray& ray, const Tri& tri);
+    float IntersectAABB(const Ray& ray, const float3 bmin, const float3 bmax);
+    float IntersectAABB_SSE(const Ray& ray, const __m128& bmin4, const __m128& bmax4);
 
     struct AABB
     {
@@ -112,20 +114,24 @@ namespace bvh
         BVH() = default;
         BVH(const char* triFile, int N);
 
-        void Build();
-        void Refit();
-        void Intersect(Ray& ray);
+        void  Build();
+        void  Refit();
+        void  Intersect(Ray& ray);
+        void  SetTransform(const mat4& transform);
 
     private:
-        void    Subdivide(uint nodeIdx);
-        void    UpdateNodeBounds(uint nodeIdx);
-        float   FindBestSplitPlane(BVHNode& node, int& axis, float& splitPos);
+        void  Subdivide(uint nodeIdx);
+        void  UpdateNodeBounds(uint nodeIdx);
+        float FindBestSplitPlane(BVHNode& node, int& axis, float& splitPos);
 
     private:
-        BVHNode*    bvhNode = nullptr;
-        Tri*        tri = nullptr;
-        uint*       triIdx = nullptr;
-        uint        nodesUsed; 
-        uint        triCount;
+        BVHNode*    bvhNode     = nullptr;
+        Tri*        tri         = nullptr;
+        uint*       triIdx      = nullptr;
+        uint        nodesUsed   = 2; 
+        uint        triCount    = 0;
+
+        mat4        invTransform;
+        AABB        bounds;
     };
 }
