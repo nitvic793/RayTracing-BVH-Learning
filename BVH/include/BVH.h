@@ -1,5 +1,7 @@
 #pragma once
 
+#define USE_SSE 1
+
 namespace bvh
 {
     constexpr float FLOAT_DIST_MAX = 1e30f;
@@ -69,4 +71,61 @@ namespace bvh
     };
 
     void IntersectTri(Ray& ray, const Tri& tri);
+
+    struct AABB
+    {
+        float3 bmin = 1e30f;
+        float3 bmax = -1e30f;
+
+        void Grow(float3 p)
+        {
+            bmin = fminf(bmin, p);
+            bmax = fmaxf(bmax, p);
+        }
+
+        void Grow(const AABB& bb)
+        {
+            bmin = fminf(bmin, bb.bmin);
+            bmax = fmaxf(bmax, bb.bmax);
+        }
+
+        float Area()
+        {
+            float3 e = bmax - bmin; // box extent
+            return e.x * e.y + e.y * e.z + e.z * e.x;
+        }
+    };
+
+    struct Bin
+    {
+        AABB Bounds;
+        int TriCount = 0;
+    };
+
+
+    class BVH
+    {
+    public:
+        static constexpr uint BINS = 8;
+
+    public:
+        BVH() = default;
+        BVH(const char* triFile, int N);
+
+        void Build();
+        void Refit();
+        void Intersect(Ray& ray);
+
+    private:
+        void    Subdivide(uint nodeIdx);
+        void    UpdateNodeBounds(uint nodeIdx);
+        float   FindBestSplitPlane(BVHNode& node, int& axis, float& splitPos);
+
+    private:
+        BVHNode*    bvhNode = nullptr;
+        Tri*        tri = nullptr;
+        uint*       triIdx = nullptr;
+        uint        nodesUsed; 
+        uint        triCount;
+    };
 }
