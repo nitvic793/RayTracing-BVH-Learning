@@ -74,6 +74,12 @@ namespace bvh
     float IntersectAABB(const Ray& ray, const float3 bmin, const float3 bmax);
     float IntersectAABB_SSE(const Ray& ray, const __m128& bmin4, const __m128& bmax4);
 
+    constexpr float GetSurfaceArea(const float3& extent)
+    {
+        const auto& e = extent;
+        return e.x * e.y + e.y * e.z + e.z * e.x;
+    }
+
     struct AABB
     {
         float3 bmin = 1e30f;
@@ -119,6 +125,10 @@ namespace bvh
         void  Intersect(Ray& ray);
         void  SetTransform(const mat4& transform);
 
+        // Public data
+        mat4  invTransform;
+        AABB  bounds;
+
     private:
         void  Subdivide(uint nodeIdx);
         void  UpdateNodeBounds(uint nodeIdx);
@@ -130,8 +140,5 @@ namespace bvh
         uint*       triIdx      = nullptr;
         uint        nodesUsed   = 2; 
         uint        triCount    = 0;
-
-        mat4        invTransform;
-        AABB        bounds;
     };
 }
