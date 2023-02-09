@@ -6,7 +6,7 @@
 
 namespace bvh
 {
-    TLAS::TLAS(BVH* bvhList, int N)
+    TLAS::TLAS(BVHInstance* bvhList, int N)
     {
         blas = bvhList;
         blasCount = N;

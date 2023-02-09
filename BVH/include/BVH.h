@@ -126,8 +126,9 @@ namespace bvh
         void  SetTransform(const mat4& transform);
 
         // Public data
-        mat4  invTransform;
-        AABB  bounds;
+        mat4        invTransform;
+        BVHNode*    bvhNode = nullptr;
+        AABB        bounds;
 
     private:
         void  Subdivide(uint nodeIdx);
@@ -135,10 +136,25 @@ namespace bvh
         float FindBestSplitPlane(BVHNode& node, int& axis, float& splitPos);
 
     private:
-        BVHNode*    bvhNode     = nullptr;
         Tri*        tri         = nullptr;
         uint*       triIdx      = nullptr;
         uint        nodesUsed   = 2; 
         uint        triCount    = 0;
+    };
+
+    class BVHInstance
+    {
+    public:
+        BVHInstance() = default;
+        BVHInstance(BVH* blas) : bvh(blas) { SetTransform(mat4()); }
+        void SetTransform(const mat4& transform);
+        void Intersect(Ray& ray);
+
+    private:
+        BVH* bvh = 0;
+        mat4 invTransform; // inverse transform
+
+    public:
+        AABB bounds; // in world space
     };
 }

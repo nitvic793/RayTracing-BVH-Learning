@@ -31,7 +31,7 @@ namespace bvh
     {
     public:
         TLAS() = default;
-        TLAS(BVH* bvhList, int N);
+        TLAS(BVHInstance* bvhList, int N);
         void Build();
         void Intersect(Ray& ray);
 
@@ -40,7 +40,7 @@ namespace bvh
 
     private:
         TLASNode*   tlasNode = nullptr;
-        BVH*        blas = nullptr;
+        BVHInstance*        blas = nullptr;
         uint        nodesUsed = 1; 
         uint        blasCount = 0;
     };

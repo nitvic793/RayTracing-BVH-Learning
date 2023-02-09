@@ -7,10 +7,46 @@ using namespace bvh;
 
 TheApp* CreateApp() { return new MyApp(); }
 
+
+constexpr uint BVH_COUNT = 256;
+
+struct Transforms
+{
+    float3* position = nullptr;
+    float3* direction = nullptr;
+    float3* orientation = nullptr;
+    uint    count = 0;
+
+    Transforms() = default;
+    Transforms(uint N) :
+        count(N)
+    {
+        position = new float3[N];
+        direction = new float3[N];
+        orientation = new float3[N];
+    }
+
+    ~Transforms()
+    {
+        if(position)
+            delete[] position;
+
+        if (direction)
+            delete[] direction;
+
+        if (orientation)
+            delete[] orientation;
+
+        position = direction = orientation = nullptr;
+    }
+};
+
 // application data
-constexpr uint BVH_COUNT = 16;
-BVH gBvh[BVH_COUNT];
+BVH* gBvh;
+BVHInstance bvhInstances[BVH_COUNT];
 TLAS tlas;
+Transforms* t;
+
 
 void MyApp::Init()
 {
@@ -26,11 +62,22 @@ void MyApp::Init()
         }
     }
 
+    gBvh = new BVH("Assets/armadillo.tri", 30000);
     for (uint i = 0; i < BVH_COUNT; ++i)
-        gBvh[i] = BVH("Assets/armadillo.tri", 30000);
+        bvhInstances[i] = BVHInstance(gBvh);
 
-    tlas = TLAS(gBvh, BVH_COUNT);
+    tlas = TLAS(bvhInstances, BVH_COUNT);
     tlas.Build();
+
+    t = new Transforms(BVH_COUNT);
+
+    for (uint i = 0; i < BVH_COUNT; ++i)
+    {
+        t->position[i] = float3(RandomFloat(), RandomFloat(), RandomFloat()) - 0.5f;
+        t->position[i] *= 4;
+        t->direction[i] = normalize(t->position[i]) * 0.05f;
+        t->orientation[i] = float3(RandomFloat(), RandomFloat(), RandomFloat()) * 2.5f;
+    }
 }
 
 void MyApp::Tick( float deltaTime )
@@ -38,40 +85,21 @@ void MyApp::Tick( float deltaTime )
     // clear the screen to black
     screen->Clear(0);
 
-    Timer t;
-
-    static float a[16] = { 0 }, h[16] = { 5, 4, 3, 2, 1, 5, 4, 3 }, s[16] = { 0 };
-    for (int i = 0, x = 0; x < 4; x++)
+    Timer timer;
+    for (int i = 0; i < BVH_COUNT; i++)
     {
-        for (int y = 0; y < 4; y++, i++)
-        {
-            mat4 R, T = mat4::Translate((x - 1.5f) * 2.5f, 0, (y - 1.5f) * 2.5f);
-            if ((x + y) & 1)
-                R = mat4::RotateX(a[i]) * mat4::RotateZ(a[i]);
-            else
-                R = mat4::Translate(0, h[i / 2], 0);
+        mat4 R = mat4::RotateX(t->orientation[i].x) *
+            mat4::RotateY(t->orientation[i].y) *
+            mat4::RotateZ(t->orientation[i].z) * mat4::Scale(0.2f);
 
-            if ((a[i] += (((i * 13) & 7) + 2) * 0.005f) > 2 * PI)
-                a[i] -= 2 * PI;
-
-            if ((s[i] -= 0.01f, h[i] += s[i]) < 0)
-                s[i] = 0.2f;
-
-            gBvh[i].SetTransform(T * R * mat4::Scale(0.75f));
-        }
+        bvhInstances[i].SetTransform(mat4::Translate(t->position[i]) * R);
+        t->position[i] += t->direction[i], t->orientation[i] += t->direction[i];
+        if (t->position[i].x < -3 || t->position[i].x > 3) t->direction[i].x *= -1;
+        if (t->position[i].y < -3 || t->position[i].y > 3) t->direction[i].y *= -1;
+        if (t->position[i].z < -3 || t->position[i].z > 3) t->direction[i].z *= -1;
     }
 
     tlas.Build();
-
-    static float angle = 0.f;
-    angle += 0.01f;
-
-    constexpr auto TWO_PI = 2.f * PI;
-    if (angle > TWO_PI)
-        angle -= TWO_PI;
-
-    gBvh[0].SetTransform(mat4::Translate(float3(-1.3f, 0, 0)));
-    gBvh[1].SetTransform(mat4::Translate(float3(1.3f, 0, 0)) * mat4::RotateY(angle));
 
     float3 p0 = TransformPosition(float3(-1, 1, 2), mat4::RotateX(0.5f));
     float3 p1 = TransformPosition(float3(1, 1, 2), mat4::RotateX(0.5f));
@@ -112,6 +140,6 @@ void MyApp::Tick( float deltaTime )
         }
     }
 
-	float elapsed = t.elapsed() * 1000;
+	float elapsed = timer.elapsed() * 1000;
 	printf("tracing time: %.2fms (%5.2fK rays/s)\n", elapsed, sqr(630) / elapsed);
 }

@@ -155,12 +155,6 @@ namespace bvh
         BVHNode* stack[64];
 
         uint stackPtr = 0;
-
-        Ray origRay = ray;
-        ray.Orig = TransformPosition(ray.Orig, invTransform);
-        ray.Dir = TransformVector(ray.Dir, invTransform);
-        ray.rD = float3(1 / ray.Dir.x, 1 / ray.Dir.y, 1 / ray.Dir.z);
-
         while (1)
         {
             if (node->IsLeaf())
@@ -204,9 +198,6 @@ namespace bvh
                     stack[stackPtr++] = child2;
             }
         }
-
-        origRay.T = ray.T;
-        ray = origRay;
 	}
 
     void BVH::SetTransform(const mat4& transform)
@@ -365,4 +356,32 @@ namespace bvh
 
         return bestCost;
 	}
+
+    void BVHInstance::SetTransform(const mat4& transform)
+    {
+        invTransform = transform.Inverted();
+        float3 bmin = bvh->bvhNode[0].AABBMin;
+        float3 bmax = bvh->bvhNode[0].AABBMax;
+
+        bounds = AABB();
+
+        for (int i = 0; i < 8; ++i)
+        {
+            bounds.Grow(TransformPosition(float3(i & 1 ? bmax.x : bmin.x,
+                i & 2 ? bmax.y : bmin.y, i & 4 ? bmax.z : bmin.z), transform));
+        }
+    }
+
+    void BVHInstance::Intersect(Ray& ray)
+    {
+        Ray origRay = ray;
+        ray.Orig = TransformPosition(ray.Orig, invTransform);
+        ray.Dir = TransformVector(ray.Dir, invTransform);
+        ray.rD = float3(1 / ray.Dir.x, 1 / ray.Dir.y, 1 / ray.Dir.z);
+
+        bvh->Intersect(ray);
+
+        origRay.T = ray.T;
+        ray = origRay;
+    }
 }
