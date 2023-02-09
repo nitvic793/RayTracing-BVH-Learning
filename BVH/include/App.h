@@ -28,7 +28,7 @@ public:
 
 	const char* GetAppName() const override { return "BVH-Construction"; }
 
-	static constexpr uint BVH_COUNT = 256;
+	static constexpr uint BVH_COUNT = 16;
 
 	bvh::BVHInstance bvhInstances[BVH_COUNT];
 	bvh::TLAS tlas;

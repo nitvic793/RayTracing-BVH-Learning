@@ -7,9 +7,6 @@ using namespace bvh;
 
 TheApp* CreateApp() { return new MyApp(); }
 
-
-constexpr uint BVH_COUNT = 256;
-
 struct Transforms
 {
     float3* position = nullptr;
@@ -41,12 +38,13 @@ struct Transforms
     }
 };
 
+//constexpr uint BVH_COUNT = 16;
 constexpr uint PIXEL_COUNT = SCRWIDTH * SCRHEIGHT;
 
 // application data
-BVH* gBvh;
-BVHInstance bvhInstances[BVH_COUNT];
-TLAS tlas;
+//BVH* gBvh;
+//BVHInstance bvhInstances[BVH_COUNT];
+//TLAS tlas;
 Transforms* t;
 
 
@@ -90,20 +88,7 @@ void MyApp::Tick( float deltaTime )
     screen->Clear(0);
 
     Timer timer;
-    for (int i = 0; i < BVH_COUNT; i++)
-    {
-        mat4 R = mat4::RotateX(t->orientation[i].x) *
-            mat4::RotateY(t->orientation[i].y) *
-            mat4::RotateZ(t->orientation[i].z) * mat4::Scale(0.2f);
-
-        bvhInstances[i].SetTransform(mat4::Translate(t->position[i]) * R);
-        t->position[i] += t->direction[i], t->orientation[i] += t->direction[i];
-        if (t->position[i].x < -3 || t->position[i].x > 3) t->direction[i].x *= -1;
-        if (t->position[i].y < -3 || t->position[i].y > 3) t->direction[i].y *= -1;
-        if (t->position[i].z < -300 || t->position[i].z > 3) t->direction[i].z *= -1;
-    }
-
-    tlas.Build();
+    Animate();
 
     float3 p0 = TransformPosition(float3(-1, 1, 2), mat4::RotateX(0.5f));
     float3 p1 = TransformPosition(float3(1, 1, 2), mat4::RotateX(0.5f));
@@ -157,6 +142,22 @@ void MyApp::Tick( float deltaTime )
 
 	float elapsed = timer.elapsed() * 1000;
 	printf("tracing time: %.2fms (%5.2fK rays/s)\n", elapsed, sqr(630) / elapsed);
+}
+
+void MyApp::Animate()
+{
+    static float a[16] = { 0 }, h[16] = { 5, 4, 3, 2, 1, 5, 4, 3 }, s[16] = { 0 };
+    for (int i = 0, x = 0; x < 4; x++) for (int y = 0; y < 4; y++, i++)
+    {
+        mat4 R, T = mat4::Translate((x - 1.5f) * 2.5f, 0, (y - 1.5f) * 2.5f);
+        if ((x + y) & 1) R = mat4::RotateY(a[i]);
+        else R = mat4::Translate(0, h[i / 2], 0);
+        if ((a[i] += (((i * 13) & 7) + 2) * 0.005f) > 2 * PI) a[i] -= 2 * PI;
+        if ((s[i] -= 0.01f, h[i] += s[i]) < 0) s[i] = 0.2f;
+        bvhInstances[i].SetTransform(T * R * mat4::Scale(1.5f));
+    }
+
+    tlas.Build();
 }
 
 float3 MyApp::Trace(bvh::Ray& ray)
