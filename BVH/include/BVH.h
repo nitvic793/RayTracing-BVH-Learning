@@ -157,10 +157,12 @@ namespace bvh
         BVHInstance() = default;
         BVHInstance(BVH* blas, uint index) : bvh(blas), idx(index) { SetTransform(mat4()); }
         void SetTransform(const mat4& transform);
+        const mat4& GetTransform() const { return transform; }
         void Intersect(Ray& ray);
 
     private:
         BVH* bvh = 0;
+        mat4 transform;
         mat4 invTransform; // inverse transform
         uint idx;
 

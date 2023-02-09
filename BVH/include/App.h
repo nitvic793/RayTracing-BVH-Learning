@@ -21,7 +21,7 @@ public:
 	void KeyDown( int key ) { /* implement if you want to handle keys */ }
 
 	void Animate();
-	float3 Trace(bvh::Ray& ray);
+	float3 Trace(bvh::Ray& ray, int rayDepth);
 
 	// data members
 	int2 mousePos;
@@ -32,9 +32,13 @@ public:
 
 	bvh::BVHInstance bvhInstances[BVH_COUNT];
 	bvh::TLAS tlas;
+	bvh::Mesh* mesh = nullptr;
 
 	float3 p0, p1, p2;
 	float3* accumulator;
+
+	float* skyPixels = nullptr;
+	int skyWidth, skyHeight, skyBpp;
 };
 
 } // namespace Tmpl8

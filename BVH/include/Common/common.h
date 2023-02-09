@@ -2,8 +2,8 @@
 // global settings and defines.
 
 // default screen resolution
-#define SCRWIDTH	640
-#define SCRHEIGHT	640
+#define SCRWIDTH	800
+#define SCRHEIGHT	800
 // #define FULLSCREEN
 
 // constants

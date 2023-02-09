@@ -357,6 +357,7 @@ namespace bvh
 
     void BVHInstance::SetTransform(const mat4& transform)
     {
+        this->transform = transform;
         invTransform = transform.Inverted();
         float3 bmin = bvh->bvhNode[0].AABBMin;
         float3 bmax = bvh->bvhNode[0].AABBMax;

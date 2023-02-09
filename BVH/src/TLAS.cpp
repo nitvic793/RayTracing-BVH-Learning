@@ -65,6 +65,7 @@ namespace bvh
 
     void TLAS::Intersect(Ray& ray)
     {
+        ray.rD = float3(1 / ray.Dir.x, 1 / ray.Dir.y, 1 / ray.Dir.z);
         TLASNode* node = &tlasNode[0];
         TLASNode* stack[64];
 
