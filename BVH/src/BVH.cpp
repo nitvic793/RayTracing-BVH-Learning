@@ -5,7 +5,7 @@
 
 namespace bvh
 {
-    void IntersectTri(Ray& ray, const Tri& tri)
+    void IntersectTri(Ray& ray, const Tri& tri, const uint instPrim)
     {
         constexpr float EPSILON = 0.0001f;
 
@@ -29,31 +29,23 @@ namespace bvh
 			return;
 
 		const float t = f * dot(edge2, q);
-		if (t > EPSILON)
-			ray.T = min(ray.T, t);
+        if (t > EPSILON && t < ray.Hit.T)
+        {
+            ray.Hit.T = min(ray.Hit.T, t);
+            ray.Hit.U = u;
+            ray.Hit.V = v;
+            ray.Hit.instPrim = instPrim;
+        }
     }
 
-	BVH::BVH(const char* triFile, int N) :
+    BVH::BVH(Mesh* triMesh):
         nodesUsed(2)
-	{
-        FILE* file = fopen(triFile, "r");
-        triCount = N;
-        tri = new Tri[N];
-        for (int t = 0; t < N; t++)
-        {
-            int ret = fscanf(file, "%f %f %f %f %f %f %f %f %f\n",
-                &tri[t].Vertex0.x, &tri[t].Vertex0.y, &tri[t].Vertex0.z,
-                &tri[t].Vertex1.x, &tri[t].Vertex1.y, &tri[t].Vertex1.z,
-                &tri[t].Vertex2.x, &tri[t].Vertex2.y, &tri[t].Vertex2.z);
-        }
-
-        fclose(file);
-
-        bvhNode = (BVHNode*)_aligned_malloc(sizeof(BVHNode) * N * 2, 64);
-        triIdx = new uint[N];
-
+    {
+        mesh = triMesh;
+        bvhNode = (BVHNode*)_aligned_malloc(sizeof(BVHNode) * mesh->triCount * 2, 64);
+        triIdx = new uint[mesh->triCount];
         Build();
-	}
+    }
 
 	void BVH::Build()
 	{
@@ -63,16 +55,17 @@ namespace bvh
         if (!bvhNode)
             return;
 
-        for (uint i = 0; i < triCount; i++)
+        for (uint i = 0; i < mesh->triCount; i++)
             triIdx[i] = i;
 
-        for (uint i = 0; i < triCount; i++)
-            tri[i].Centroid = (tri[i].Vertex0 + tri[i].Vertex1 + tri[i].Vertex2) * 0.3333f;
+        Tri* tri = mesh->tri;
+        for (uint i = 0; i < mesh->triCount; i++)
+            mesh->tri[i].Centroid = (tri[i].Vertex0 + tri[i].Vertex1 + tri[i].Vertex2) * 0.3333f;
 
         BVHNode& root = bvhNode[rootNodeIdx];
 
         root.LeftFirst = 0; 
-        root.TriCount = triCount;
+        root.TriCount = mesh->triCount;
 
         UpdateNodeBounds(rootNodeIdx);
         {
@@ -122,7 +115,7 @@ namespace bvh
         tmin = max(tmin, min(tz1, tz2));
         tmax = min(tmax, max(tz1, tz2));
 
-        if (tmax >= tmin && tmin < ray.T && tmax > 0)
+        if (tmax >= tmin && tmin < ray.Hit.T && tmax > 0)
             return tmin;
         else
             return FLOAT_DIST_MAX;
@@ -139,7 +132,7 @@ namespace bvh
         float tmax = min(vmax4.m128_f32[0], min(vmax4.m128_f32[1], vmax4.m128_f32[2]));
         float tmin = max(vmin4.m128_f32[0], max(vmin4.m128_f32[1], vmin4.m128_f32[2]));
 
-        if (tmax >= tmin && tmin < ray.T && tmax > 0)
+        if (tmax >= tmin && tmin < ray.Hit.T && tmax > 0)
             return tmin;
         else
             return FLOAT_DIST_MAX;
@@ -147,7 +140,7 @@ namespace bvh
 
 #endif
 
-	void BVH::Intersect(Ray& ray)
+	void BVH::Intersect(Ray& ray, uint instanceIdx)
 	{
         uint rootNodeIdx = 0;
 
@@ -160,7 +153,12 @@ namespace bvh
             if (node->IsLeaf())
             {
                 for (uint i = 0; i < node->TriCount; i++)
-                    IntersectTri(ray, tri[triIdx[node->LeftFirst + i]]);
+                {
+                    const uint triangleIdx = triIdx[node->LeftFirst + i];
+                    const uint instPrim = (instanceIdx << 20) + triangleIdx;
+                    IntersectTri(ray, mesh->tri[triangleIdx], instPrim);
+                }
+
                 if (stackPtr == 0)
                     break;
                 else
@@ -241,7 +239,7 @@ namespace bvh
         int j = i + node.TriCount - 1;
         while (i <= j)
         {
-            if (tri[triIdx[i]].Centroid[axis] < splitPos)
+            if (mesh->tri[triIdx[i]].Centroid[axis] < splitPos)
                 i++;
             else
                 swap(triIdx[i], triIdx[j--]);
@@ -273,7 +271,7 @@ namespace bvh
 		for (uint first = node.LeftFirst, i = 0; i < node.TriCount; i++)
 		{
 			uint leafTriIdx = triIdx[first + i];
-			Tri& leafTri = tri[leafTriIdx];
+			Tri& leafTri = mesh->tri[leafTriIdx];
 			node.AABBMin = fminf(node.AABBMin, leafTri.Vertex0);
 			node.AABBMin = fminf(node.AABBMin, leafTri.Vertex1);
 			node.AABBMin = fminf(node.AABBMin, leafTri.Vertex2);
@@ -298,7 +296,7 @@ namespace bvh
 
             for (uint i = 0; i < node.TriCount; ++i)
             {
-                Tri& triangle = tri[triIdx[node.LeftFirst + i]];
+                Tri& triangle = mesh->tri[triIdx[node.LeftFirst + i]];
                 boundsMin = min(boundsMin, triangle.Centroid[axis]);
                 boundsMax = max(boundsMax, triangle.Centroid[axis]);
             }
@@ -310,7 +308,7 @@ namespace bvh
             float scale = BINS / (boundsMax - boundsMin);
             for (uint i = 0; i < node.TriCount; ++i)
             {
-                Tri& triangle = tri[triIdx[node.LeftFirst + i]];
+                Tri& triangle = mesh->tri[triIdx[node.LeftFirst + i]];
                 int binIdx = min((int)BINS - 1, (int)((triangle.Centroid[axis] - boundsMin) * scale));
                 bins[binIdx].TriCount++;
                 bins[binIdx].Bounds.Grow(triangle.Vertex0);
@@ -379,9 +377,44 @@ namespace bvh
         ray.Dir = TransformVector(ray.Dir, invTransform);
         ray.rD = float3(1 / ray.Dir.x, 1 / ray.Dir.y, 1 / ray.Dir.z);
 
-        bvh->Intersect(ray);
+        bvh->Intersect(ray, idx);
 
-        origRay.T = ray.T;
+        origRay.Hit = ray.Hit;
         ray = origRay;
+    }
+
+    Mesh::Mesh(const char* objFile, const char* textureFile)
+    {
+        texture = new Surface(textureFile);
+        tri = new Tri[25000];
+        triEx = new TriEx[25000];
+        float2* UV = new float2[11042]; 
+        N = new float3[11042], P = new float3[11042];
+        int UVs = 0, Ns = 0, Ps = 0, a, b, c, d, e, f, g, h, i;
+        FILE* file = fopen(objFile, "r");
+        if (!file) return; // file doesn't exist
+        while (!feof(file))
+        {
+            char line[512] = { 0 };
+            fgets(line, 511, file);
+            if (line == strstr(line, "vt "))
+                sscanf(line + 3, "%f %f", &UV[UVs].x, &UV[UVs].y), UVs++;
+            else if (line == strstr(line, "vn "))
+                sscanf(line + 3, "%f %f %f", &N[Ns].x, &N[Ns].y, &N[Ns].z), Ns++;
+            else if (line[0] == 'v')
+                sscanf(line + 2, "%f %f %f", &P[Ps].x, &P[Ps].y, &P[Ps].z), Ps++;
+            if (line[0] != 'f') continue; else
+                sscanf(line + 2, "%i/%i/%i %i/%i/%i %i/%i/%i",
+                    &a, &b, &c, &d, &e, &f, &g, &h, &i);
+            tri[triCount].Vertex0 = P[a - 1], triEx[triCount].N0 = N[c - 1];
+            tri[triCount].Vertex1 = P[d - 1], triEx[triCount].N1 = N[f - 1];
+            tri[triCount].Vertex2 = P[g - 1], triEx[triCount].N2 = N[i - 1];
+            triEx[triCount].uv0 = UV[b - 1], triEx[triCount].uv1 = UV[e - 1];
+            triEx[triCount++].uv2 = UV[h - 1];
+        }
+
+        fclose(file);
+
+        bvh = new BVH(this);
     }
 }

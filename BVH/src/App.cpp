@@ -41,6 +41,8 @@ struct Transforms
     }
 };
 
+constexpr uint PIXEL_COUNT = SCRWIDTH * SCRHEIGHT;
+
 // application data
 BVH* gBvh;
 BVHInstance bvhInstances[BVH_COUNT];
@@ -62,9 +64,9 @@ void MyApp::Init()
         }
     }
 
-    gBvh = new BVH("Assets/armadillo.tri", 30000);
+    Mesh* mesh = new Mesh("Assets/teapot.obj", "Assets/bricks.png");
     for (uint i = 0; i < BVH_COUNT; ++i)
-        bvhInstances[i] = BVHInstance(gBvh);
+        bvhInstances[i] = BVHInstance(mesh->bvh, i);
 
     tlas = TLAS(bvhInstances, BVH_COUNT);
     tlas.Build();
@@ -78,6 +80,8 @@ void MyApp::Init()
         t->direction[i] = normalize(t->position[i]) * 0.05f;
         t->orientation[i] = float3(RandomFloat(), RandomFloat(), RandomFloat()) * 2.5f;
     }
+
+    accumulator = new float3[PIXEL_COUNT];
 }
 
 void MyApp::Tick( float deltaTime )
@@ -96,7 +100,7 @@ void MyApp::Tick( float deltaTime )
         t->position[i] += t->direction[i], t->orientation[i] += t->direction[i];
         if (t->position[i].x < -3 || t->position[i].x > 3) t->direction[i].x *= -1;
         if (t->position[i].y < -3 || t->position[i].y > 3) t->direction[i].y *= -1;
-        if (t->position[i].z < -3 || t->position[i].z > 3) t->direction[i].z *= -1;
+        if (t->position[i].z < -300 || t->position[i].z > 3) t->direction[i].z *= -1;
     }
 
     tlas.Build();
@@ -129,17 +133,37 @@ void MyApp::Tick( float deltaTime )
                     (p2 - p0) * ((y * TILE_SIZE + v) / (float)HEIGHT);
 
                 ray.Dir = normalize(pixelPos - ray.Orig);
-                ray.T = FLOAT_DIST_MAX;
+                ray.Hit.T = FLOAT_DIST_MAX;
                 ray.rD = float3(1 / ray.Dir.x, 1 / ray.Dir.y, 1 / ray.Dir.z);
-                    
-                tlas.Intersect(ray);
+                  
+                uint pixelAddress = x * TILE_SIZE + u + (y * TILE_SIZE + v) * SCRWIDTH;
+                accumulator[pixelAddress] = Trace(ray);
+                //tlas.Intersect(ray);
 
-                uint c = ray.T < FLOAT_DIST_MAX ? (int)(255 / (1 + max(0.f, ray.T - 4))) : 0;
-                screen->Plot(x * 8 + u, y * 8 + v, c * 0x10101);
+                //uint c = ray.Hit.T < FLOAT_DIST_MAX ? (int)(255 / (1 + max(0.f, ray.Hit.T - 4))) : 0;
+                //screen->Plot(x * 8 + u, y * 8 + v, c * 0x10101);
             }
         }
     }
 
+    for (int i = 0; i < PIXEL_COUNT; i++)
+    {
+        int r = min(255, (int)(255 * accumulator[i].x));
+        int g = min(255, (int)(255 * accumulator[i].y));
+        int b = min(255, (int)(255 * accumulator[i].z));
+        screen->pixels[i] = (r << 16) + (g << 8) + b;
+        //screen->Plot(r, g, b);
+    }
+
 	float elapsed = timer.elapsed() * 1000;
 	printf("tracing time: %.2fms (%5.2fK rays/s)\n", elapsed, sqr(630) / elapsed);
+}
+
+float3 MyApp::Trace(bvh::Ray& ray)
+{
+    tlas.Intersect(ray);
+    Intersection i = ray.Hit;
+    if (i.T == FLOAT_DIST_MAX) 
+        return float3(0);
+    return float3(i.U, i.V, 1 - (i.U + i.V));
 }

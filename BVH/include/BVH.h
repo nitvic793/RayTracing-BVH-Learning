@@ -14,6 +14,15 @@ namespace bvh
         float3 Centroid;
     };
 
+
+    struct Intersection
+    {
+        float T = FLOAT_DIST_MAX;		// intersection distance along ray
+        float U;
+        float V;		// U,V => barycentric coordinates
+        uint instPrim;	// instance index (12 bit) and primitive index (20 bit)
+    };
+
     __declspec(align(64)) struct Ray
     {
         Ray() 
@@ -37,7 +46,7 @@ namespace bvh
             struct { float3 rD; float dummy3; }; __m128 rD4; 
         };
 
-        float  T = FLOAT_DIST_MAX;
+        Intersection Hit;
     };
 
     struct BVHNode
@@ -70,7 +79,7 @@ namespace bvh
         }
     };
 
-    void IntersectTri(Ray& ray, const Tri& tri);
+    void IntersectTri(Ray& ray, const Tri& tri, const uint instPrim);
     float IntersectAABB(const Ray& ray, const float3 bmin, const float3 bmax);
     float IntersectAABB_SSE(const Ray& ray, const __m128& bmin4, const __m128& bmax4);
 
@@ -110,6 +119,7 @@ namespace bvh
         int TriCount = 0;
     };
 
+    class Mesh;
 
     class BVH
     {
@@ -118,11 +128,11 @@ namespace bvh
 
     public:
         BVH() = default;
-        BVH(const char* triFile, int N);
+        BVH(Mesh* triMesh);
 
         void  Build();
         void  Refit();
-        void  Intersect(Ray& ray);
+        void  Intersect(Ray& ray, uint instanceIdx);
         void  SetTransform(const mat4& transform);
 
         // Public data
@@ -136,25 +146,52 @@ namespace bvh
         float FindBestSplitPlane(BVHNode& node, int& axis, float& splitPos);
 
     private:
-        Tri*        tri         = nullptr;
         uint*       triIdx      = nullptr;
         uint        nodesUsed   = 2; 
-        uint        triCount    = 0;
+        Mesh*       mesh        = nullptr;
     };
 
     class BVHInstance
     {
     public:
         BVHInstance() = default;
-        BVHInstance(BVH* blas) : bvh(blas) { SetTransform(mat4()); }
+        BVHInstance(BVH* blas, uint index) : bvh(blas), idx(index) { SetTransform(mat4()); }
         void SetTransform(const mat4& transform);
         void Intersect(Ray& ray);
 
     private:
         BVH* bvh = 0;
         mat4 invTransform; // inverse transform
+        uint idx;
 
     public:
         AABB bounds; // in world space
+    };
+
+    struct TriEx 
+    { 
+        float2 uv0; 
+        float2 uv1;
+        float2 uv2;
+        float3 N0;
+        float3 N1; 
+        float3 N2;
+        float dummy; 
+    };
+
+    class Mesh
+    {
+    public:
+        Mesh() = default;
+        Mesh(const char* objFile, const char* textureFile);
+
+        BVH*    bvh = nullptr;
+        Tri*     tri;
+        TriEx*   triEx;
+        float3* P = nullptr;
+        float3* N = nullptr;
+        int     triCount = 0;
+
+        Surface* texture = nullptr;
     };
 }
